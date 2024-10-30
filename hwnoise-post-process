@@ -1,0 +1,107 @@
+#!/usr/bin/perl
+## -*- mode: perl; indent-tabs-mode: nil; perl-indent-level: 4 -*-
+## vim: autoindent tabstop=4 shiftwidth=4 expandtab softtabstop=4 filetype=perl
+
+use strict;
+use warnings;
+use JSON::XS;
+use Data::Dumper;
+use Getopt::Long;
+
+BEGIN {
+    if (!(exists $ENV{'TOOLBOX_HOME'} && -d "$ENV{'TOOLBOX_HOME'}/perl")) {
+    print "This script requires libraries that are provided by the toolbox project.\n";
+    print "Toolbox can be acquired from https://github.com/perftool-incubator/toolbox and\n";
+    print "then use 'export TOOLBOX_HOME=/path/to/toolbox' so that it can be located.\n";
+    exit 1;
+    }
+}
+use lib "$ENV{'TOOLBOX_HOME'}/perl";
+use toolbox::json;
+use toolbox::cpu;
+use toolbox::metrics;
+
+my $ignore;
+GetOptions ("runtime=s" => \$ignore,
+            "priority=s" => \$ignore,
+            "period=s" => \$ignore,
+            "cpus=s" => \$ignore,
+            "runtime=s" => \$ignore,
+            "no-load-balance" => \$ignore,
+            "smt=s" => \$ignore,
+            );
+
+my $primary_metric = 'maximum-latency-usec';
+my %times;
+my $metric_data_name;
+
+if (-e "begin.txt" && -e "end.txt") {
+    foreach my $i (qw(begin end)) {
+        my $file = $i . ".txt";
+        open(FH, $file) || die "Could not open " . $file;
+        $times{$i} = int (<FH> * 1000);
+        close FH;
+    }
+} else {
+    printf "hwnoise-post-process(): could not find begin.txt and/or end.txt\n";
+    printf "Is the current directory for the hwnoise server (no result file)?\n";
+    exit 0;
+}
+
+my $result_file = "hwnoise-bin-stderrout.txt";
+if ( -e $result_file) {
+    open($fh, '<', $result_file) || die "Could not open file " . $result_file;
+
+    my @latencies;
+
+    while (my $line = <$fh>) {
+    	# Capture latencies from the "Maximum:" line
+    	if ($line =~ /^Maximum:\s*(.*)/) {
+        	@latencies = split(/\s+/, $1);  # Store latencies in an array
+    	}
+    }
+
+    # Close the file
+    close($fh);
+
+    # Check if we have both core and latency data
+    if (@latencies) {
+        # Initialize max values
+        my $max_latency = $latencies[0];
+        my $max_core = $cores[0];
+
+        # Find the core with the maximum latency
+        for my $i (1 .. $#latencies) {
+            if ($latencies[$i] > $max_latency) {
+                $max_latency = $latencies[$i];
+            }
+            my %desc = ('source' => 'hwnoise', 'type' => $primary_metric, 'class' => 'count');
+            my %names = ();
+            my %sample = ('begin' => $times{'begin'}, 'end' => $times{'end'}, 'value' => int $max_latency);
+            log_sample("0", \%desc, \%names, \%sample);
+        }
+        $metric_data_name = finish_samples();
+    } else {
+        die("Could not parse latencies from hwnoise-bin-stderrout.txt\n");
+    }
+} else {
+    die("Could not find file post-process-data.json\n");
+}
+
+# Associate the metrics with a benchmark-period (in this case "measurement")
+my %sample;
+my @metric_files = ( $metric_data_name );
+my @periods;
+my %period = ('name' => 'measurement');
+$sample{'rickshaw-bench-metric'}{'schema'}{'version'} = "2024.10.30";
+$period{'metric-files'} = \@metric_files;
+push(@periods, \%period);
+$sample{'periods'} = \@periods;
+$sample{'benchmark'} = 'hwnoise';
+$sample{'primary-period'} = 'measurement';
+$sample{'primary-metric'} = $primary_metric;
+my $coder = JSON::XS->new;
+open(JSON_FH, ">post-process-data.json") ||
+    die("Could not open file post-process-data.json for writing\n");
+print JSON_FH $coder->encode(\%sample);
+close JSON_FH;

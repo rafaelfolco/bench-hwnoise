@@ -1,0 +1,26 @@
+{
+    "workshop": {
+        "schema": {
+            "version": "2024.10.30"
+        }
+    },
+    "userenvs": [
+        {
+            "name": "default",
+            "requirements": [
+                "appstream"
+            ]
+        }
+    ],
+    "requirements": [
+        {
+            "name": "appstream",
+            "type": "distro",
+            "distro_info": {
+                "packages": [
+		    "realtime-tests"
+		]
+            }
+        }
+    ]
+}
